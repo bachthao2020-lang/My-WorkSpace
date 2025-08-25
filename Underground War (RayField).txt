@@ -7,12 +7,10 @@ Rewritten UI: RayField (https://sirius.menu/rayfield)
 ]]
 
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
-
-local N = Instance.new("BindableFunction")
 local function notify(n, c, i, t)
 	n = n or "GGH52Lan"
 	c = c or "text"
-	i = i or "rbxassetid://14260295451"
+	i = i or "info"
 	t = t or 5
 	Rayfield:Notify({
 		Title = n,
@@ -26,17 +24,23 @@ local function notify1(Title, Text, con, Duration, Button, F)
 	Title = Title or "GGH52Lan"
 	Text = Text or "Text"
 	Duration = Duration or 5
-	Button = Button or "Button"
+	Button = Button or "OK"
 	F = F or function() end
 	con = con or "rbxassetid://14260295451"
-	N.OnInvoke = F
-	game:GetService("StarterGui"):SetCore("SendNotification", {
-		Title = Title;
-		Text = Text;
-		Icon = con;
-		Duration = Duration;
-		Button1 = Button;
-		Callback = N;
+	Rayfield:Notify({
+		Title = Title,
+		Content = Text,
+		Duration = Duration,
+		Image = con,
+		Actions = {
+			IgnoreDuration = true,
+			Accept = {
+				Name = Button,
+				Callback = function()
+					F(Button)
+				end
+			}
+		}
 	})
 end
 
@@ -44,18 +48,30 @@ local function notify2(Title, Text, con, Duration, Button, B, F)
 	Title = Title or "GGH52Lan"
 	Text = Text or "Text"
 	Duration = Duration or 5
-	Button = Button or "Button"
+	Button = Button or "OK"
+	B = B or "Cancel"
 	F = F or function() end
 	con = con or "rbxassetid://14260295451"
-	N.OnInvoke = F
-	game:GetService("StarterGui"):SetCore("SendNotification", {
-		Title = Title;
-		Text = Text;
-		Icon = con;
-		Duration = Duration;
-		Button1 = Button;
-		Button2 = B;
-		Callback = N;
+	Rayfield:Notify({
+		Title = Title,
+		Content = Text,
+		Duration = Duration,
+		Image = con,
+		Actions = {
+			IgnoreDuration = true,
+			Deny = {
+				Name = B,
+				Callback = function()
+					F(B)
+				end
+			},
+			Accept = {
+				Name = Button,
+				Callback = function()
+					F(Button)
+				end
+			}
+		}
 	})
 end
 
