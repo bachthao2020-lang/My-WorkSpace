@@ -1,0 +1,958 @@
+--[[ by GGH52Lan
+YT: https://www.youtube.com/@RandomVidzz-G
+pls if u remake this script put a credit or a original creator Ex: (credit to GGH52Lan) or (original script is from GGH52Lan)
+i Open source cuz for people who want to remake it and make better
+
+Rewritten UI: RayField (https://sirius.menu/rayfield)
+]]
+
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local N = Instance.new("BindableFunction")
+local function notify(n, c, i, t)
+	n = n or "GGH52Lan"
+	c = c or "text"
+	i = i or "rbxassetid://14260295451"
+	t = t or 5
+	Rayfield:Notify({
+		Title = n,
+		Content = c,
+		Duration = t,
+		Image = i
+	})
+end
+
+local function notify1(Title, Text, con, Duration, Button, F)
+	Title = Title or "GGH52Lan"
+	Text = Text or "Text"
+	Duration = Duration or 5
+	Button = Button or "Button"
+	F = F or function() end
+	con = con or "rbxassetid://14260295451"
+	N.OnInvoke = F
+	game:GetService("StarterGui"):SetCore("SendNotification", {
+		Title = Title;
+		Text = Text;
+		Icon = con;
+		Duration = Duration;
+		Button1 = Button;
+		Callback = N;
+	})
+end
+
+local function notify2(Title, Text, con, Duration, Button, B, F)
+	Title = Title or "GGH52Lan"
+	Text = Text or "Text"
+	Duration = Duration or 5
+	Button = Button or "Button"
+	F = F or function() end
+	con = con or "rbxassetid://14260295451"
+	N.OnInvoke = F
+	game:GetService("StarterGui"):SetCore("SendNotification", {
+		Title = Title;
+		Text = Text;
+		Icon = con;
+		Duration = Duration;
+		Button1 = Button;
+		Button2 = B;
+		Callback = N;
+	})
+end
+
+local Players = game:GetService("Players")
+local plr = Players.LocalPlayer
+local RunService = game:GetService("RunService")
+local TeleportService = game:GetService("TeleportService")
+local MarketplaceService = game:GetService("MarketplaceService")
+local TweenService = game:GetService("TweenService")
+
+local autoT = false -- auto Tool
+local loop = true
+local retry = true -- retry for tp kill
+local autoU = true -- auto update Target
+_G.name = "sword" -- Tool name
+Mode = "enemy"
+local reach = 10
+local auto = true -- auto detect if there's a team
+
+local G = loadstring(game:HttpGet("https://raw.githubusercontent.com/Bwhw827g29wh/47448/refs/heads/main/GetPlayers.lua"))()
+local Target = G:getPlayers("enemies")
+
+local Whitelist = { ["GGH52Lan"] = true, ["jie_liania"] = true, ["GGH52Lan_2"] = true }
+local Blacklist = {}
+
+local function addToWhitelist(playerName)
+	if not Whitelist[playerName] then
+		Whitelist[playerName] = true
+		notify(playerName.DisplayName, "has been added to the whitelist.")
+	else
+		notify(playerName.DisplayName, "is already in the whitelist.")
+	end
+end
+
+local function removeFromWhitelist(playerName)
+	if Whitelist[playerName] then
+		Whitelist[playerName] = nil
+		notify(playerName.DisplayName, "has been removed from the whitelist.")
+	else
+		notify(playerName.DisplayName, "is not in the whitelist.")
+	end
+end
+
+local function addToBlacklist(playerName)
+	if not Blacklist[playerName] then
+		Blacklist[playerName] = true
+		notify(nil, playerName.DisplayName .. " has been added to the blacklist.")
+	else
+		notify(nil, playerName.DisplayName .. " is already in the blacklist.")
+	end
+end
+
+local function removeFromBlacklist(playerName)
+	if Blacklist[playerName] then
+		Blacklist[playerName] = nil
+		notify(nil, playerName.Name .. " has been removed from the blacklist.")
+	else
+		notify(nil, playerName.Name .. " is not in the blacklist.")
+	end
+end
+
+local function isWhitelisted(playerName)
+	return (Whitelist[playerName] ~= nil or Whitelist[playerName.Name] ~= nil)
+end
+
+local function isBlacklisted(playerName)
+	return Blacklist[playerName] ~= nil
+end
+
+local function findTool(searchString)
+	local lowerSearchString = searchString:lower()
+	for _, tool in pairs(plr.Backpack:GetChildren()) do
+		if tool:IsA("Tool") and tool.Name:lower():match(lowerSearchString) then
+			return tool
+		end
+	end
+	for _, tool in pairs(plr.Character:GetChildren()) do
+		if tool:IsA("Tool") and tool.Name:lower():match(lowerSearchString) then
+			return tool
+		end
+	end
+	return nil
+end
+
+local AntiCheat
+local Checks
+local Areas
+local TeleportToArea
+local GetEnemyTeam
+local alrTP = false
+if game.PlaceId == 9791603388 then
+	AntiCheat = workspace.AntiCheat
+	Checks = {
+		Blue = AntiCheat.Blue,
+		Red = AntiCheat.Red
+	}
+	Areas = {
+		Red = CFrame.new(0, 14, 100),
+		Blue = CFrame.new(0, 14, -100),
+		Underground = CFrame.new(0, 0, 0),
+		Safespot = CFrame.new(0, -5, 0)
+	}
+	TeleportToArea = function()
+		local rootPart = plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
+		local playerTeam = plr.Team
+		if rootPart then
+			if tostring(playerTeam) == "Red" then
+				rootPart.CFrame = Checks["Red"].CFrame
+				wait(0.25)
+				rootPart.CFrame = Checks["Blue"].CFrame
+				wait(0.25)
+			elseif tostring(playerTeam) == "Blue" then
+				rootPart.CFrame = Checks["Blue"].CFrame
+				wait(0.25)
+				rootPart.CFrame = Checks["Red"].CFrame
+				wait(0.25)
+			end
+			alrTP = true
+		else
+			print("RootPart not found in character.")
+		end
+	end
+end
+
+local function getTool()
+	local h = findTool(_G.name)
+	return h
+end
+
+local auraL = true
+local auraRange = 30
+local function aura(h, ch, r, f, ray)
+	if h and h:FindFirstChild("Handle") then
+		if type(r) ~= "number" then
+			r = auraRange
+		elseif f then
+			r = 8373763
+		end
+		local v
+		if ch:IsA"Player" then
+			v = ch.Character
+		elseif ch:IsA"Model" then
+			v = ch
+		end
+		if v ~= plr or Players:GetPlayerFromCharacter(v) ~= plr then
+			local humanoid = v:FindFirstChildOfClass("Humanoid")
+			local targetRootPart = humanoid and humanoid.RootPart
+			if humanoid and humanoid.Health > 0 and not v:FindFirstChildOfClass("ForceField") and plr.Character and plr.Character:FindFirstChildOfClass("Humanoid").Health > 0 then
+				if plr:DistanceFromCharacter(targetRootPart.Position) <= r then
+					if ray then
+						local startPosition = plr.Character.HumanoidRootPart.Position
+						local direction = (targetRootPart.Position - startPosition).unit * r
+						local raycastResult = workspace:Raycast(startPosition, direction)
+						if raycastResult and raycastResult.Instance then
+							if raycastResult.Instance:IsDescendantOf(v) then
+								if h.Parent ~= plr.Character then
+									h.Parent = plr.Character
+								end
+								h:Activate()
+								for _, p in pairs(v:GetChildren()) do
+									if p:IsA("BasePart") then
+										firetouchinterest(h.Handle, p, 0)
+										firetouchinterest(h.Handle, p, 1)
+									end
+								end
+							end
+						else
+							if h.Parent ~= plr.Character then
+								h.Parent = plr.Character
+							end
+							h:Activate()
+							for _, p in pairs(v:GetChildren()) do
+								if p:IsA("BasePart") then
+									firetouchinterest(h.Handle, p, 0)
+									firetouchinterest(h.Handle, p, 1)
+								end
+							end
+						end
+					else
+						if h.Parent ~= plr.Character then
+							h.Parent = plr.Character
+						end
+						h:Activate()
+						for _, p in pairs(v:GetChildren()) do
+							if p:IsA("BasePart") then
+								firetouchinterest(h.Handle, p, 0)
+								firetouchinterest(h.Handle, p, 1)
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+end
+
+local function tp(t, c)
+	if t and plr and plr.Character then
+		local humanoid = plr.Character:FindFirstChildWhichIsA("Humanoid")
+		if humanoid and humanoid.RootPart then
+			if game.PlaceId == 9791603388 and c then
+				if not alrTP then
+					TeleportToArea()
+				else
+					-- already did
+				end
+				humanoid.RootPart.CFrame = t.Character:FindFirstChildWhichIsA("Humanoid").RootPart.CFrame * CFrame.new(-1.6, 0, 1.8)
+			else
+				humanoid.RootPart.CFrame = t.Character:FindFirstChildWhichIsA("Humanoid").RootPart.CFrame * CFrame.new(-1.6, 0, 1.8)
+			end
+			return true
+		else
+			warn("Humanoid or RootPart not found in player's character.")
+		end
+	else
+		warn("Invalid target or player character.")
+	end
+	return false
+end
+
+local function tp2(enemies)
+	if not enemies or #enemies == 0 then return end
+	local originalPosition = plr.Character.HumanoidRootPart.Position
+	for _, enemy in pairs(enemies) do
+		if enemy and enemy.Character then
+			local humanoid = enemy.Character:FindFirstChildWhichIsA("Humanoid")
+			local rootPart = humanoid and humanoid.RootPart
+			if rootPart then
+				local teleportPosition
+				if game.PlaceId == 9791603388 then
+					teleportPosition = rootPart.CFrame * CFrame.new(0, -11, 0)
+				else
+					teleportPosition = rootPart.CFrame * CFrame.new(-1.6, 0, 1.8)
+				end
+				local tweenInfo = TweenInfo.new(0.1, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut)
+				local tween = TweenService:Create(plr.Character.HumanoidRootPart, tweenInfo, { CFrame = teleportPosition })
+				tween:Play()
+				tween.Completed:Wait()
+			end
+		end
+	end
+	local returnTween = TweenService:Create(plr.Character.HumanoidRootPart, TweenInfo.new(0.1, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut), { CFrame = CFrame.new(originalPosition) })
+	returnTween:Play()
+	returnTween.Completed:Wait()
+end
+
+local function KillAura()
+	loop = true
+	if Mode == "enemy" then
+		repeat
+			for _, player in pairs(Players:GetPlayers()) do
+				if isWhitelisted(player.Name) then continue end
+				pcall(function()
+					if player ~= plr and player.Team ~= plr.Team and not isWhitelisted(player) then
+						local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+						local rootPart = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+						if humanoid and rootPart and humanoid.Health > 0 and plr.Character.Humanoid.Health > 0 and player.Character:FindFirstChildOfClass("ForceField") == nil and plr:DistanceFromCharacter(rootPart.Position) <= reach then
+							local h
+							if not autoT then
+								h = getTool()
+							elseif autoT and plr.Character:FindFirstChildOfClass("Tool") then
+								h = plr.Character:FindFirstChildOfClass("Tool")
+							end
+							if h then
+								if h.Parent ~= plr.Character then
+									h.Parent = plr.Character
+								end
+								tp(player)
+								humanoid.PlatformStand = true
+								aura(h, player, 10)
+								if humanoid.Health <= 0 or plr.Character:FindFirstChildOfClass("Humanoid").Health <= 0 then
+									loop = false
+									if retry then
+										wait(1)
+										KillAura()
+									end
+								end
+							else
+								print("Tool not found.")
+							end
+						end
+					end
+				end)
+			end
+			RunService.Heartbeat:Wait()
+		until not loop
+	elseif Mode == "others" then
+		repeat
+			for _, player in pairs(Players:GetPlayers()) do
+				if isWhitelisted(player.Name) then continue end
+				pcall(function()
+					if player ~= plr and not isWhitelisted(player) then
+						local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+						local rootPart = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+						if humanoid and rootPart and humanoid.Health > 0 and plr.Character.Humanoid.Health > 0 and player.Character:FindFirstChildOfClass("ForceField") == nil and plr:DistanceFromCharacter(rootPart.Position) <= reach then
+							local h
+							if not autoT then
+								h = getTool()
+							elseif autoT and plr.Character:FindFirstChildOfClass("Tool") then
+								h = plr.Character:FindFirstChildOfClass("Tool")
+							end
+							if h then
+								if h.Parent ~= plr.Character then
+									h.Parent = plr.Character
+								end
+								tp(player)
+								humanoid.PlatformStand = true
+								aura(h, player, 10)
+								if humanoid.Health <= 0 or plr.Character:FindFirstChildOfClass("Humanoid").Health <= 0 then
+									loop = false
+									if retry then
+										wait(1)
+										KillAura()
+									end
+								end
+							else
+								print("Tool not found.")
+							end
+						end
+					end
+				end)
+			end
+			RunService.Heartbeat:Wait()
+		until not loop
+	end
+end
+
+function GC(String)
+	local clipBoard = setclipboard or toclipboard or set_clipboard or (Clipboard and Clipboard.set)
+	if clipBoard then
+		clipBoard(String)
+		notify('Clipboard','Copied to clipboard')
+	else
+		notify('Clipboard',"Something went wrong 😕")
+	end
+end
+
+local function modeDetector()
+	if auto == true then
+		if not game:GetService("Teams"):FindFirstChildOfClass("Team") then
+			Mode = "others"
+		else
+			Mode = "enemy"
+		end
+	else
+		-- manual
+	end
+end
+
+-- RayField Window and Tabs
+local Window = Rayfield:CreateWindow({
+	Name = "Sword Fight Aura V2.2",
+	LoadingTitle = "Sword Fight Aura V2.2",
+	LoadingSubtitle = "RayField UI",
+	ConfigurationSaving = { Enabled = false }
+})
+
+local TabMain = Window:CreateTab("Kill Aura", 4483362458)
+
+TabMain:CreateButton({
+	Name = "TP kill",
+	Callback = function()
+		modeDetector()
+		loop = true
+		retry = true
+		KillAura()
+	end
+})
+
+TabMain:CreateButton({
+	Name = "TP kill off",
+	Callback = function()
+		loop = false
+		retry = false
+	end
+})
+
+TabMain:CreateButton({
+	Name = "notify Tool name",
+	Callback = function()
+		for i, v in pairs(plr.Character:GetChildren()) do
+			if v:IsA"Tool" then
+				notify2(v.Name, v.name, nil, 60, "TargetTool", "Ok", function(t)
+					if t == "TargetTool" then
+						_G.name = tostring(v.Name)
+						wait(1)
+						notify("Target Tool:", _G.name)
+					elseif t == "Ok" then
+						notify(nil, "👍")
+					end
+				end)
+				wait(1)
+			end
+		end
+		if not plr.Character:FindFirstChildOfClass"Tool" then
+			notify(nil, "Equip Tool")
+		end
+	end
+})
+
+TabMain:CreateInput({
+	Name = "Reach - Aura",
+	PlaceholderText = "r<number> or a<number>",
+	RemoveTextAfterFocusLost = false,
+	Callback = function(text)
+		if text ~= "" then
+			local firstChar = text:sub(1, 1)
+			local value = tonumber(text:sub(2, #text))
+			if value then
+				if firstChar == "r" then
+					reach = value
+					notify("TP Range set to", reach)
+				elseif firstChar == "a" then
+					auraRange = value
+					notify("Aura Range set to", auraRange)
+				else
+					notify(nil, "Invalid command. Use 'r' for TP Range or 'a' for Aura Range.")
+				end
+			else
+				notify(nil, "Invalid number entered. Please enter a valid numeric value.")
+			end
+		end
+	end
+})
+
+TabMain:CreateToggle({
+	Name = "Auto Detect Tool",
+	CurrentValue = false,
+	Callback = function(bool)
+		if bool then
+			notify("GGH52LAN","You need to Equip tool",nil,10)
+			notify("⚠️⚠️⚠️⚠️","Not recommended if u equipping is not sword",nil,10)
+			autoT = true
+		else
+			autoT = false
+		end
+	end
+})
+
+TabMain:CreateDropdown({
+	Name = "Mode",
+	Options = {"auto","enemies only","others"},
+	CurrentOption = "auto",
+	MultipleOptions = false,
+	Callback = function(o)
+		if o == "enemies only" then
+			Mode = "enemy"
+			auto = false
+		elseif o == "others" then
+			Mode = "others"
+			auto = false
+		elseif o == "auto" then
+			auto = true
+		end
+	end
+})
+
+notify2("YT: GGH52LAN", "https://www.youtube.com/@RandomVidzz-G", nil, 60, "Copy", "👍", function(G)
+	if G == "Copy" then
+		GC("https://www.youtube.com/@RandomVidzz-G")
+	elseif G == "👍" then
+		notify(":(", ":(", "rbxassetid://14260616969")
+	end
+end)
+
+notify("Special Edition","Universal Sword Fights Script",nil,10)
+
+local alrL = "enemies"
+local function autoU()
+	while true do
+		if G:getPlayers(alrL) then
+			Target = G:getPlayers(alrL)
+		end
+		RunService.Heartbeat:Wait()
+	end
+end
+
+local TabSpecial = Window:CreateTab("Special Edition", 4483362458)
+
+TabSpecial:CreateInput({
+	Name = "Target",
+	PlaceholderText = "players/me/random/enemies/all/others/team or name",
+	RemoveTextAfterFocusLost = false,
+	Callback = function(text)
+		if text ~= "" then
+			alrL = text
+		end
+	end
+})
+
+local lop
+local lastpos
+local db = true
+
+TabSpecial:CreateButton({
+	Name = "Fast Kill",
+	Callback = function()
+		if db then
+			db = false
+			lop = true
+			auraL = true
+			local humanoid = plr.Character:FindFirstChildWhichIsA("Humanoid")
+			if humanoid then
+				local lastpos = humanoid.RootPart.CFrame
+				alrTP = false
+				if #Target > 0 then
+					repeat
+						for _, v in pairs(Target) do
+							if isWhitelisted(v.Name) then continue end
+							if v ~= plr and v.Character and not isWhitelisted(v) then
+								local targetHumanoid = v.Character:FindFirstChildOfClass("Humanoid")
+								local targetRootPart = v.Character:FindFirstChild("HumanoidRootPart")
+								if targetHumanoid and targetHumanoid.Health > 0 and humanoid.Health > 0 and not v.Character:FindFirstChildOfClass("ForceField") then
+									local h
+									if not autoT then
+										h = getTool()
+									elseif autoT then
+										h = plr.Character:FindFirstChildOfClass("Tool")
+									end
+									if targetHumanoid.Health < 0 and humanoid.Health < 0 and targetHumanoid:GetState() == Enum.HumanoidStateType.Dead then
+										lop = false
+										db = true
+										break
+									end
+									if h then
+										h.Parent = plr.Character
+										targetHumanoid.PlatformStand = true
+										h:Activate()
+										tp(v, true)
+										aura(h, v, nil, true)
+									end
+								end
+							end
+						end
+						RunService.Heartbeat:Wait()
+					until not lop
+					db = true
+					humanoid.RootPart.CFrame = lastpos
+				else
+					print("No players found.")
+				end
+			else
+				print("Player humanoid not found.")
+			end
+		else
+			notify("Wait!","")
+			wait(1)
+			db = true
+		end
+	end
+})
+
+TabSpecial:CreateButton({
+	Name = "Stop Fast Kill",
+	Callback = function()
+		lop = false
+	end
+})
+
+local Isray = true
+local TNPC = false
+
+TabSpecial:CreateToggle({
+	Name = "Ray Cast",
+	CurrentValue = true,
+	Callback = function(bool)
+		Isray = bool
+		notify(nil, "Ray Casting Enabled: "..tostring(Isray))
+	end
+})
+
+TabSpecial:CreateToggle({
+	Name = "Target NPC [ Lag ]",
+	CurrentValue = false,
+	Callback = function(bool)
+		TNPC = bool
+		notify(nil, "Target NPC Enabled: "..tostring(TNPC))
+	end
+})
+
+TabSpecial:CreateToggle({
+	Name = "Real Aura",
+	CurrentValue = false,
+	Callback = function(bool)
+		if bool then
+			auraL = true
+			repeat
+				pcall(function()
+					local h
+					if not autoT then
+						h = getTool()
+					elseif autoT and plr.Character:FindFirstChildOfClass("Tool") then
+						h = plr.Character:FindFirstChildOfClass("Tool")
+					end
+					if h then
+						if not TNPC then
+							for i, v in pairs(Target) do
+								if isWhitelisted(v) or isWhitelisted(v.Name) then continue end
+								aura(h, v, nil, nil, Isray)
+							end
+						else
+							for i, v in pairs(workspace:GetDescendants()) do
+								if v:IsA"Model" and v:FindFirstChildOfClass("Humanoid") then
+									if isWhitelisted(v) or isWhitelisted(v.Name) then continue end
+									aura(h, v, nil, nil, Isray)
+								end
+							end
+						end
+					end
+				end)
+				RunService.Heartbeat:Wait()
+			until not auraL
+		else
+			auraL = false
+		end
+	end
+})
+
+local function hindiKanaNiyaMahal(...)
+	for sakit, iiyak in pairs({...}) do
+		if iiyak and iiyak:IsA("Player") then
+			local puso = iiyak.Character and iiyak.Character:FindFirstChildWhichIsA("Humanoid")
+			if puso then
+				if puso:GetState() == Enum.HumanoidStateType.Dead then
+					return true
+				end
+			end
+		end
+	end
+	return false
+end
+
+if game.PlaceId == (9791603388) then
+	local undTab = Window:CreateTab(MarketplaceService:GetProductInfo(9791603388).Name, 4483362458)
+	local ReplicatedStorage = game:GetService("ReplicatedStorage")
+	local RemoteEvent = ReplicatedStorage.Events.Remote.ShotTarget
+	local Players = game:GetService("Players")
+	local RunService = game:GetService("RunService")
+	local player = Players.LocalPlayer
+	local shooting = false
+
+	local function isNear(...)
+		local nearestPlayer = nil
+		local nearestDistance = math.huge
+		for _, target in pairs({...}) do
+			if target ~= player and target.Team ~= player.Team then
+				local targetCharacter = target.Character
+				if targetCharacter and targetCharacter:FindFirstChild("HumanoidRootPart") and target.Character:FindFirstChildOfClass("Humanoid").Health > 0 then
+					local distance = (targetCharacter.PrimaryPart.Position - player.Character.PrimaryPart.Position).magnitude
+					if distance < nearestDistance then
+						nearestDistance = distance
+						nearestPlayer = target
+					end
+				end
+			end
+		end
+		return nearestPlayer
+	end
+
+	local function isCharacterStable(targetPlayer)
+		local targetCharacter = targetPlayer.Character
+		if not targetCharacter then return false end
+		local humanoid = targetCharacter:FindFirstChildOfClass("Humanoid")
+		local humanoidRootPart = targetCharacter:FindFirstChild("HumanoidRootPart")
+		if not humanoid or not humanoidRootPart then return false end
+		local velocity = humanoidRootPart.Velocity.magnitude
+		local stabilityThreshold = humanoid.WalkSpeed
+		return velocity < stabilityThreshold
+	end
+
+	local function predictPosition(targetPlayer)
+		local targetCharacter = targetPlayer.Character
+		if targetCharacter then
+			local humanoid = targetCharacter:FindFirstChildOfClass("Humanoid")
+			local humanoidRootPart = targetCharacter:FindFirstChild("HumanoidRootPart")
+			if humanoid and humanoidRootPart then
+				local currentPosition = targetCharacter.Head.Position
+				local moveDirection = humanoid.MoveDirection
+				local speed = humanoid.WalkSpeed
+				local timeToPredict = 0.44
+				local velocity = moveDirection * speed
+				if moveDirection.magnitude == 0 then
+					return currentPosition
+				else
+					local predictedPosition = currentPosition + (velocity * timeToPredict)
+					return predictedPosition
+				end
+			end
+		end
+		return nil
+	end
+
+	local function canHit(targetPlayer)
+		local targetHRP = targetPlayer.Character and targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+		if not targetHRP then return false end
+		local startPosition = player.Character.Head.Position
+		local endPosition = targetPlayer.Character.Head.Position
+		local direction = (endPosition - startPosition).unit * (startPosition - endPosition).magnitude
+		local raycastParams = RaycastParams.new()
+		raycastParams.FilterDescendantsInstances = { player.Character }
+		raycastParams.IgnoreWater = true
+		local raycastResult = workspace:Raycast(startPosition, direction, raycastParams)
+		return not raycastResult or raycastResult.Instance:IsDescendantOf(targetPlayer.Character)
+	end
+
+	local function on(bool)
+		if bool then
+			RunService.Heartbeat:Connect(function()
+				if shooting then
+					for i, v in pairs(Players:GetPlayers()) do
+						if isWhitelisted(v) or isWhitelisted(v.Name) then continue end
+						local nearestPlayer = isNear(v)
+						if v and v.Team ~= plr.Team and v.Character:FindFirstChildWhichIsA("ForceField") == nil and not hindiKanaNiyaMahal(v, plr) then
+							if isCharacterStable(v) and canHit(v) then
+								local predictedPosition = predictPosition(v)
+								if predictedPosition then
+									local args = { [1] = predictedPosition, [2] = "Sniper" }
+									if player.Character:FindFirstChild("Sniper") then
+										RemoteEvent:FireServer(unpack(args))
+										player.Character:FindFirstChild("Sniper"):Activate()
+									end
+								end
+							else
+								wait(0.5)
+							end
+						else
+							-- no valid player
+						end
+					end
+				end
+			end)
+		else
+			shooting = false
+		end
+	end
+
+	undTab:CreateToggle({
+		Name = "Auto Shoot",
+		CurrentValue = false,
+		Callback = function(bool)
+			shooting = bool
+			if bool then on(true) else on(false) end
+		end
+	})
+
+	undTab:CreateButton({
+		Name = "Sniper/Sword Combination",
+		Callback = function()
+			if plr.Character:FindFirstChild"Sword" or plr.Character:FindFirstChild"Sniper" then
+				plr.Character.Humanoid:UnequipTools()
+				notify(nil, "Dont Equip Sniper/Sword when clicking", nil)
+			else
+				if not (shooting and auraL) then
+					notify("Note", "Turn on Real Aura and Auto Shoot for better experience")
+					return false
+				end
+				plr.Backpack.Sniper.Parent = plr.Character
+				plr.Backpack.Sword.Parent = plr.Character
+			end
+		end
+	})
+
+	undTab:CreateInput({
+		Name = "Whitelist",
+		PlaceholderText = "players/me/random/enemies/all/others/team or name",
+		RemoveTextAfterFocusLost = false,
+		Callback = function(text)
+			if text ~= "" then
+				local p = G:getPlayers(text)
+				if p then
+					for i, v in pairs(p) do addToWhitelist(v) end
+				else
+					notify(nil, "Player not found")
+				end
+			end
+		end
+	})
+
+	undTab:CreateInput({
+		Name = "Unwhitelist",
+		PlaceholderText = "players/me/random/enemies/all/others/team or name",
+		RemoveTextAfterFocusLost = false,
+		Callback = function(text)
+			if text ~= "" then
+				local p = G:getPlayers(text)
+				if p then
+					for i, v in pairs(p) do removeFromWhitelist(v) end
+				else
+					notify(nil, "Player not found")
+				end
+			end
+		end
+	})
+
+	undTab:CreateInput({
+		Name = "Check",
+		PlaceholderText = "players/me/random/enemies/all/others/team or name",
+		RemoveTextAfterFocusLost = false,
+		Callback = function(text)
+			if text ~= "" then
+				local p = G:getPlayers(text)
+				if p then
+					for i, v in pairs(p) do
+						if isWhitelisted(v) then
+							notify(nil, v.DisplayName..", Is Whitelisted")
+						else
+							notify(nil, v.DisplayName..", Is Not Whitelisted")
+						end
+					end
+				else
+					notify(nil, "Player not found")
+				end
+			end
+		end
+	})
+else
+	local w3 = Window:CreateTab("Whitelist Player", 4483362458)
+	w3:CreateInput({
+		Name = "Whitelist",
+		PlaceholderText = "players/me/random/enemies/all/others/team or name",
+		RemoveTextAfterFocusLost = false,
+		Callback = function(text)
+			if text ~= "" then
+				local p = G:getPlayers(text)
+				if p then
+					for i, v in pairs(p) do addToWhitelist(v) end
+				else
+					notify(nil, "Player not found")
+				end
+			end
+		end
+	})
+	w3:CreateInput({
+		Name = "Unwhitelist",
+		PlaceholderText = "players/me/random/enemies/all/others/team or name",
+		RemoveTextAfterFocusLost = false,
+		Callback = function(text)
+			if text ~= "" then
+				local p = G:getPlayers(text)
+				if p then
+					for i, v in pairs(p) do removeFromWhitelist(v) end
+				else
+					notify(nil, "Player not found")
+				end
+			end
+		end
+	})
+	w3:CreateInput({
+		Name = "Check",
+		PlaceholderText = "players/me/random/enemies/all/others/team or name",
+		RemoveTextAfterFocusLost = false,
+		Callback = function(text)
+			if text ~= "" then
+				local p = G:getPlayers(text)
+				if p then
+					for i, v in pairs(p) do
+						if isWhitelisted(v) then
+							notify(v.DisplayName, "Is Whitelisted")
+						else
+							notify(v.DisplayName, "Is Not Whitelisted")
+						end
+					end
+				else
+					notify(nil, "Player not found")
+				end
+			end
+		end
+	})
+
+	local otherGamePlaceId = (9791603388)
+	local function getGameDetails(placeId)
+		local success, gameInfo = pcall(function()
+			return MarketplaceService:GetProductInfo(placeId)
+		end)
+		if success then
+			return gameInfo.Name
+		else
+			warn("Failed to get game details: " .. tostring(gameInfo))
+			return "Unknown Game"
+		end
+	end
+	local otherGameName = getGameDetails(otherGamePlaceId)
+	notify2("Supported Game", otherGameName, nil, 999, "Teleport", "✌️", function(b)
+		if b == "Teleport" then
+			TeleportService:Teleport(otherGamePlaceId, Players.LocalPlayer)
+		end
+	end)
+end
+
+spawn(autoU)
+
+Players.PlayerRemoving:Connect(function(v)
+	if isWhitelisted(v) then
+		removeFromWhitelist(v)
+		notify(v.DisplayName, "Removed From Whitelist For Leaving", nil, 10)
+	end
+end)
+
+return _G.name
+
