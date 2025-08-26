@@ -802,53 +802,88 @@ if game.PlaceId == (9791603388) then
 	local RunService = game:GetService("RunService")
 	local player = Players.LocalPlayer
 	local shooting = false
-
+	-- Ultimate Auto Shoot state
+	local Camera = workspace.CurrentCamera
+	local currentTarget = nil
+	local lastTargetStamp = 0
+	local hbConn = nil
+	local aimSmoother = { last = nil }
+	
+	local function getAimPartPosition(targetPlayer, partName)
+		local ch = targetPlayer and targetPlayer.Character
+		if not ch then return nil end
+		local part = (partName == "HumanoidRootPart" and ch:FindFirstChild("HumanoidRootPart"))
+			or (partName == "UpperTorso" and ch:FindFirstChild("UpperTorso"))
+			or ch:FindFirstChild("Head")
+		return part and part.Position or nil
+	end
+	
+	local function isInFOV(worldPosition, maxFov)
+		local cam = Camera
+		if not cam then return true end
+		local dir = (worldPosition - cam.CFrame.Position).Unit
+		local forward = cam.CFrame.LookVector.Unit
+		local dot = math.clamp(dir:Dot(forward), -1, 1)
+		local angle = math.deg(math.acos(dot))
+		return angle <= (maxFov or 180)
+	end
 	-- Enhanced target selection with priority system
 	local function getBestTarget()
 		local bestTarget = nil
 		local bestScore = -math.huge
-		local playerPos = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-		if not playerPos then return nil end
+		local playerHRP = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+		if not playerHRP then return nil end
 		
+		local fovLimit = (autoShootConfig and autoShootConfig.fovDegrees) or 180
 		for _, target in pairs(Players:GetPlayers()) do
 			if target ~= player and target.Team ~= player.Team and not isWhitelisted(target.Name) then
 				local targetCharacter = target.Character
-				if targetCharacter and targetCharacter:FindFirstChild("HumanoidRootPart") and target.Character:FindFirstChildOfClass("Humanoid").Health > 0 then
-					local distance = (targetCharacter.HumanoidRootPart.Position - playerPos.Position).magnitude
-					local humanoid = target.Character:FindFirstChildOfClass("Humanoid")
-					local velocity = targetCharacter.HumanoidRootPart.Velocity.magnitude
-					
-					-- Check if target is within configured range
-					if distance <= (autoShootConfig and autoShootConfig.maxRange or 200) then
-						-- Dynamic scoring based on configuration
-						local distanceScore = 0
-						local velocityScore = 0
-						local healthScore = 0
-						
-						if autoShootConfig and autoShootConfig.priorityClosest then
-							distanceScore = math.max(0, 100 - distance)
-						end
-						
-						if autoShootConfig and autoShootConfig.prioritySlowMovement then
-							velocityScore = math.max(0, 50 - velocity/2)
-						end
-						
-						if autoShootConfig and autoShootConfig.priorityLowHealth then
-							healthScore = math.max(0, 100 - humanoid.Health)
-						end
-						
-						-- If no priorities are set, use balanced scoring
-						if not (autoShootConfig and (autoShootConfig.priorityClosest or autoShootConfig.prioritySlowMovement or autoShootConfig.priorityLowHealth)) then
-							distanceScore = math.max(0, 100 - distance)
-							velocityScore = math.max(0, 50 - velocity/2)
-							healthScore = math.max(0, 100 - humanoid.Health)
-						end
-						
-						local totalScore = distanceScore + velocityScore + healthScore
-						
-						if totalScore > bestScore then
-							bestScore = totalScore
-							bestTarget = target
+				local humanoid = targetCharacter and targetCharacter:FindFirstChildOfClass("Humanoid")
+				local targetHRP = targetCharacter and targetCharacter:FindFirstChild("HumanoidRootPart")
+				if humanoid and targetHRP and humanoid.Health > 0 then
+					local distance = (targetHRP.Position - playerHRP.Position).Magnitude
+					if distance <= ((autoShootConfig and autoShootConfig.maxRange) or 200) then
+						local aimPos = getAimPartPosition(target, (autoShootConfig and autoShootConfig.aimPart) or "Head") or targetHRP.Position
+						if isInFOV(aimPos, fovLimit) then
+							local velocity = targetHRP.Velocity.Magnitude
+							local distanceScore = 0
+							local velocityScore = 0
+							local healthScore = 0
+							
+							if autoShootConfig and autoShootConfig.priorityClosest then
+								distanceScore = math.max(0, 100 - distance)
+							end
+							if autoShootConfig and autoShootConfig.prioritySlowMovement then
+								velocityScore = math.max(0, 50 - velocity/2)
+							end
+							if autoShootConfig and autoShootConfig.priorityLowHealth then
+								healthScore = math.max(0, 100 - humanoid.Health)
+							end
+							if not (autoShootConfig and (autoShootConfig.priorityClosest or autoShootConfig.prioritySlowMovement or autoShootConfig.priorityLowHealth)) then
+								distanceScore = math.max(0, 100 - distance)
+								velocityScore = math.max(0, 50 - velocity/2)
+								healthScore = math.max(0, 100 - humanoid.Health)
+							end
+							
+							local visibilityBonus = 0
+							if autoShootConfig and autoShootConfig.preferVisibleTargets then
+								if canHitAdvanced(target) then
+									visibilityBonus = 50
+								else
+									visibilityBonus = -50
+								end
+							end
+							
+							local stickyBonus = 0
+							if currentTarget == target and (tick() - lastTargetStamp) <= ((autoShootConfig and autoShootConfig.stickyTargetTime) or 1.0) then
+								stickyBonus = 40
+							end
+							
+							local totalScore = distanceScore + velocityScore + healthScore + visibilityBonus + stickyBonus
+							if totalScore > bestScore then
+								bestScore = totalScore
+								bestTarget = target
+							end
 						end
 					end
 				end
@@ -856,65 +891,68 @@ if game.PlaceId == (9791603388) then
 		end
 		return bestTarget
 	end
-
 	-- Advanced movement prediction with multiple algorithms
 	local function predictPositionAdvanced(targetPlayer)
 		local targetCharacter = targetPlayer.Character
 		if not targetCharacter then return nil end
 		
 		local humanoid = targetCharacter:FindFirstChildOfClass("Humanoid")
-		local humanoidRootPart = targetCharacter:FindFirstChild("HumanoidRootPart")
+		local targetHRP = targetCharacter:FindFirstChild("HumanoidRootPart")
 		local head = targetCharacter:FindFirstChild("Head")
 		
-		if not humanoid or not humanoidRootPart or not head then return nil end
+		if not humanoid or not targetHRP or not head then return nil end
 		
-		local currentPosition = head.Position
-		local currentVelocity = humanoidRootPart.Velocity
-		local moveDirection = humanoid.MoveDirection
-		local walkSpeed = humanoid.WalkSpeed
+		local aimPartName = (autoShootConfig and autoShootConfig.aimPart) or "Head"	
+		local targetAimPos = getAimPartPosition(targetPlayer, aimPartName) or head.Position
 		
-		-- Check if advanced prediction is enabled
-		if autoShootConfig and not autoShootConfig.useAdvancedPrediction then
-			-- Simple linear prediction with configurable strength
-			local strength = autoShootConfig.predictionStrength or 0.5
-			return currentPosition + (currentVelocity * strength)
+		local playerCharacter = player.Character
+		local playerHead = playerCharacter and playerCharacter:FindFirstChild("Head")
+		local playerHRP = playerCharacter and playerCharacter:FindFirstChild("HumanoidRootPart")
+		if not playerHead or not playerHRP then return nil end
+		
+		local origin = playerHead.Position
+		local targetVel = targetHRP.Velocity
+		local bulletSpeed = (autoShootConfig and autoShootConfig.bulletSpeed) or 450
+		local gravity = (autoShootConfig and autoShootConfig.gravity) or workspace.Gravity or 196.2
+		local useAdvanced = autoShootConfig and autoShootConfig.useAdvancedPrediction
+		
+		if not useAdvanced then
+			local strength = autoShootConfig and autoShootConfig.predictionStrength or 0.5
+			local pos = targetAimPos + (targetVel * strength)
+			if autoShootConfig and autoShootConfig.smoothingFactor and aimSmoother.last then
+				local a = math.clamp(autoShootConfig.smoothingFactor, 0, 1)
+				pos = aimSmoother.last:Lerp(pos, a)
+			end
+			aimSmoother.last = pos
+			return pos
 		end
 		
-		-- Multiple prediction algorithms
-		local predictions = {}
+		-- Ballistic lead with gravity compensation (iterative)
+		local gVec = Vector3.new(0, -gravity, 0)
+		local toTarget = targetAimPos - origin
+		local distance = toTarget.Magnitude
+		local t = distance / math.max(1, bulletSpeed)
 		
-		-- Algorithm 1: Linear prediction based on current velocity
-		local linearPrediction = currentPosition + (currentVelocity * 0.5)
-		table.insert(predictions, linearPrediction)
-		
-		-- Algorithm 2: Direction-based prediction
-		if moveDirection.magnitude > 0.1 then
-			local directionPrediction = currentPosition + (moveDirection * walkSpeed * 0.4)
-			table.insert(predictions, directionPrediction)
+		for _ = 1, 3 do
+			local drop = 0.5 * gVec * (t * t)
+			local futurePos = targetAimPos + targetVel * t + drop
+			local newToTarget = futurePos - origin
+			t = newToTarget.Magnitude / math.max(1, bulletSpeed)
 		end
 		
-		-- Algorithm 3: Acceleration-based prediction (if velocity is changing)
-		local lastVelocity = targetPlayer:GetAttribute("LastVelocity") or currentVelocity
-		local acceleration = (currentVelocity - lastVelocity) * 0.3
-		local accelerationPrediction = currentPosition + (currentVelocity * 0.4) + (acceleration * 0.1)
-		table.insert(predictions, accelerationPrediction)
+		local predicted = targetAimPos + targetVel * t + 0.5 * gVec * (t * t)
 		
-		-- Store current velocity for next frame
-		targetPlayer:SetAttribute("LastVelocity", currentVelocity)
-		
-		-- Return weighted average of predictions
-		local finalPosition = Vector3.new(0, 0, 0)
-		local totalWeight = 0
-		
-		for i, pred in ipairs(predictions) do
-			local weight = 1 / i -- First prediction has highest weight
-			finalPosition = finalPosition + (pred * weight)
-			totalWeight = totalWeight + weight
+		if autoShootConfig and autoShootConfig.leadMovingTargets == false then
+			predicted = targetAimPos
 		end
 		
-		return finalPosition / totalWeight
+		if autoShootConfig and autoShootConfig.smoothingFactor and aimSmoother.last then
+			local a = math.clamp(autoShootConfig.smoothingFactor, 0, 1)
+			predicted = aimSmoother.last:Lerp(predicted, a)
+		end
+		aimSmoother.last = predicted
+		return predicted
 	end
-
 	-- Enhanced hit detection with multiple checks
 	local function canHitAdvanced(targetPlayer)
 		local targetCharacter = targetPlayer.Character
@@ -972,7 +1010,6 @@ if game.PlaceId == (9791603388) then
 		-- Return true if majority of checks pass
 		return hitCount >= math.ceil(totalChecks * 0.6)
 	end
-
 	-- Target stability assessment with multiple factors
 	local function isTargetStable(targetPlayer)
 		local targetCharacter = targetPlayer.Character
@@ -1009,7 +1046,26 @@ if game.PlaceId == (9791603388) then
 		
 		return velocityStable and healthStable and notJumping and notFalling and movementStable
 	end
-
+	
+	local function isValidAutoShootTarget(p)
+		if not p or isWhitelisted(p.Name) then return false end
+		if p == player or p.Team == player.Team then return false end
+		local ch = p.Character
+		if not ch then return false end
+		local hum = ch:FindFirstChildOfClass("Humanoid")
+		local hrp = ch:FindFirstChild("HumanoidRootPart")
+		if not hum or not hrp or hum.Health <= 0 then return false end
+		if ch:FindFirstChildOfClass("ForceField") then return false end
+		local myHRP = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+		if not myHRP then return false end
+		local dist = (hrp.Position - myHRP.Position).Magnitude
+		if dist > ((autoShootConfig and autoShootConfig.maxRange) or 200) then return false end
+		local aimPos = getAimPartPosition(p, (autoShootConfig and autoShootConfig.aimPart) or "Head") or hrp.Position
+		if not isInFOV(aimPos, (autoShootConfig and autoShootConfig.fovDegrees) or 180) then return false end
+		if autoShootConfig and autoShootConfig.preferVisibleTargets and not canHitAdvanced(p) then return false end
+		return true
+	end
+	
 	-- Enhanced Auto Shoot with advanced targeting
 	local lastShotTime = 0
 	local shotCooldown = 0.8 -- Minimum time between shots
@@ -1018,68 +1074,56 @@ if game.PlaceId == (9791603388) then
 	
 	local function on(bool)
 		if bool then
-			RunService.Heartbeat:Connect(function()
-				if shooting and tick() - lastShotTime >= shotCooldown then
-					local bestTarget = getBestTarget()
-					
-					if bestTarget and bestTarget.Character and not isWhitelisted(bestTarget.Name) then
-						local targetCharacter = bestTarget.Character
-						local humanoid = targetCharacter:FindFirstChildOfClass("Humanoid")
-						
-						-- Check if target is valid
-						if humanoid and humanoid.Health > 0 and targetCharacter:FindFirstChildWhichIsA("ForceField") == nil and not hindiKanaNiyaMahal(bestTarget, plr) then
-							
-							-- Advanced stability and hit detection
-							if isTargetStable(bestTarget) and canHitAdvanced(bestTarget) then
-								local predictedPosition = predictPositionAdvanced(bestTarget)
-								
-								if predictedPosition then
-									-- Dynamic cooldown based on accuracy
-									local adaptiveCooldown = shotCooldown
-									if autoShootConfig and autoShootConfig.adaptiveCooldown then
-										if consecutiveHits > 3 then
-											adaptiveCooldown = math.max(0.3, shotCooldown - 0.1)
-										elseif consecutiveMisses > 2 then
-											adaptiveCooldown = math.min(1.5, shotCooldown + 0.2)
-										end
-									end
-									
-									-- Check if enough time has passed with adaptive cooldown
-									if tick() - lastShotTime >= adaptiveCooldown then
-										local args = { [1] = predictedPosition, [2] = "Sniper" }
-										
-										if player.Character:FindFirstChild("Sniper") then
-											-- Fire the shot
-											RemoteEvent:FireServer(unpack(args))
-											player.Character:FindFirstChild("Sniper"):Activate()
-											
-											lastShotTime = tick()
-											
-											-- Track shot accuracy (simplified - in real implementation you'd need to track actual hits)
-											local distance = (predictedPosition - targetCharacter.Head.Position).magnitude
-											if distance < 5 then -- Close enough to consider a potential hit
-												consecutiveHits = consecutiveHits + 1
-												consecutiveMisses = 0
-											else
-												consecutiveMisses = consecutiveMisses + 1
-												consecutiveHits = 0
-											end
-											
-											-- Reset counters if they get too high
-											if consecutiveHits > 10 then consecutiveHits = 5 end
-											if consecutiveMisses > 10 then consecutiveMisses = 5 end
-										end
-									end
+			if hbConn then hbConn:Disconnect() end
+			hbConn = RunService.Heartbeat:Connect(function()
+				if not shooting then return end
+				local now = tick()
+				local baseCooldown = (autoShootConfig and autoShootConfig.shotCooldown) or shotCooldown
+				local adaptiveCooldown = baseCooldown
+				if autoShootConfig and autoShootConfig.adaptiveCooldown then
+					if consecutiveHits > 3 then
+						adaptiveCooldown = math.max(0.25, baseCooldown - 0.1)
+					elseif consecutiveMisses > 2 then
+						adaptiveCooldown = math.min(1.5, baseCooldown + 0.2)
+					end
+				end
+				if now - lastShotTime < adaptiveCooldown then return end
+				
+				local stickyTime = (autoShootConfig and autoShootConfig.stickyTargetTime) or 1.0
+				if currentTarget and (now - lastTargetStamp) <= stickyTime and isValidAutoShootTarget(currentTarget) then
+					-- keep current target
+				else
+					currentTarget = getBestTarget()
+					lastTargetStamp = now
+				end
+				
+				if currentTarget and isValidAutoShootTarget(currentTarget) and isTargetStable(currentTarget) and canHitAdvanced(currentTarget) then
+					local predictedPosition = predictPositionAdvanced(currentTarget)
+					if predictedPosition then
+						if player.Character:FindFirstChild("Sniper") then
+							RemoteEvent:FireServer(predictedPosition, "Sniper")
+							player.Character:FindFirstChild("Sniper"):Activate()
+							lastShotTime = now
+							local targetAimPos = getAimPartPosition(currentTarget, (autoShootConfig and autoShootConfig.aimPart) or "Head")
+							if targetAimPos then
+								local distanceError = (predictedPosition - targetAimPos).Magnitude
+								if distanceError <= ((autoShootConfig and autoShootConfig.accuracyThreshold) or 5) then
+									consecutiveHits = consecutiveHits + 1
+									consecutiveMisses = 0
+								else
+									consecutiveMisses = consecutiveMisses + 1
+									consecutiveHits = 0
 								end
-							else
-								-- Target not stable, wait a bit longer
-								wait(0.1)
+								if consecutiveHits > 10 then consecutiveHits = 5 end
+								if consecutiveMisses > 10 then consecutiveMisses = 5 end
 							end
 						end
-					else
-						-- No valid target, reduce cooldown for faster target acquisition
-						shotCooldown = math.max(0.3, shotCooldown - 0.05)
 					end
+				else
+					-- No valid target, reduce cooldown for faster target acquisition
+					shotCooldown = math.max(0.3, ((autoShootConfig and autoShootConfig.shotCooldown) or 0.8) - 0.05)
+					autoShootConfig.shotCooldown = shotCooldown
+					aimSmoother.last = nil
 				end
 			end)
 		else
@@ -1087,9 +1131,12 @@ if game.PlaceId == (9791603388) then
 			-- Reset accuracy tracking when stopping
 			consecutiveHits = 0
 			consecutiveMisses = 0
+			if hbConn then hbConn:Disconnect() hbConn = nil end
+			currentTarget = nil
+			aimSmoother.last = nil
 		end
 	end
-
+	
 	-- Auto Shoot Configuration Variables
 	local autoShootConfig = {
 		enabled = false,
@@ -1104,9 +1151,17 @@ if game.PlaceId == (9791603388) then
 		useMultiRaycast = true,
 		smartTargetSwitching = true,
 		leadMovingTargets = true,
-		predictionStrength = 0.5
+		predictionStrength = 0.5,
+		-- Ultimate additions
+		fovDegrees = 85,
+		bulletSpeed = 450,
+		gravity = workspace.Gravity,
+		aimPart = "Head",
+		smoothingFactor = 0.5,
+		stickyTargetTime = 1.0,
+		preferVisibleTargets = true
 	}
-
+	
 	undTab:CreateToggle({
 		Name = "🎯 Auto Shoot (Enhanced)",
 		CurrentValue = false,
@@ -1122,7 +1177,7 @@ if game.PlaceId == (9791603388) then
 			end
 		end
 	})
-
+	
 	undTab:CreateSlider({
 		Name = "🎯 Shot Cooldown",
 		Range = {0.1, 2.0},
@@ -1135,7 +1190,7 @@ if game.PlaceId == (9791603388) then
 			notifySuccess("Cooldown Updated", "Shot cooldown set to " .. string.format("%.1f", value) .. "s", 3)
 		end
 	})
-
+	
 	undTab:CreateSlider({
 		Name = "📏 Max Range",
 		Range = {50, 500},
@@ -1147,7 +1202,19 @@ if game.PlaceId == (9791603388) then
 			notifySuccess("Range Updated", "Maximum targeting range set to " .. value .. " studs", 3)
 		end
 	})
-
+	
+	undTab:CreateSlider({
+		Name = "👁️ FOV Limit",
+		Range = {20, 180},
+		Increment = 5,
+		Suffix = "°",
+		CurrentValue = 85,
+		Callback = function(value)
+			autoShootConfig.fovDegrees = value
+			notifySuccess("FOV Updated", "FOV limit set to " .. value .. "°", 3)
+		end
+	})
+	
 	undTab:CreateToggle({
 		Name = "🧠 Adaptive Cooldown",
 		CurrentValue = true,
@@ -1160,7 +1227,7 @@ if game.PlaceId == (9791603388) then
 			end
 		end
 	})
-
+	
 	undTab:CreateToggle({
 		Name = "🎯 Advanced Prediction",
 		CurrentValue = true,
@@ -1173,7 +1240,7 @@ if game.PlaceId == (9791603388) then
 			end
 		end
 	})
-
+	
 	undTab:CreateToggle({
 		Name = "🔍 Multi-Raycast",
 		CurrentValue = true,
@@ -1186,7 +1253,7 @@ if game.PlaceId == (9791603388) then
 			end
 		end
 	})
-
+	
 	undTab:CreateDropdown({
 		Name = "🎯 Target Priority",
 		Options = {"Closest", "Lowest Health", "Slowest Movement", "Balanced"},
@@ -1213,7 +1280,117 @@ if game.PlaceId == (9791603388) then
 			notifySuccess("Priority Updated", "Target priority set to: " .. option, 3)
 		end
 	})
-
+	
+	undTab:CreateSlider({
+		Name = "🚀 Bullet Speed",
+		Range = {200, 1200},
+		Increment = 25,
+		Suffix = " stud/s",
+		CurrentValue = 450,
+		Callback = function(value)
+			autoShootConfig.bulletSpeed = value
+			notifySuccess("Bullet Speed", "Bullet speed set to " .. value, 3)
+		end
+	})
+	
+	undTab:CreateSlider({
+		Name = "🌍 Gravity Compensation",
+		Range = {0, 300},
+		Increment = 5,
+		Suffix = " stud/s²",
+		CurrentValue = math.floor(workspace.Gravity + 0.5),
+		Callback = function(value)
+			autoShootConfig.gravity = value
+			notifySuccess("Gravity Updated", "Using gravity " .. value, 3)
+		end
+	})
+	
+	undTab:CreateSlider({
+		Name = "🎯 Aim Smoothing",
+		Range = {0, 1},
+		Increment = 0.05,
+		Suffix = "",
+		CurrentValue = 0.5,
+		Callback = function(value)
+			autoShootConfig.smoothingFactor = value
+			notifySuccess("Smoothing", "Aim smoothing set to " .. string.format("%.2f", value), 3)
+		end
+	})
+	
+	undTab:CreateSlider({
+		Name = "🧲 Sticky Target Time",
+		Range = {0, 3},
+		Increment = 0.1,
+		Suffix = "s",
+		CurrentValue = 1.0,
+		Callback = function(value)
+			autoShootConfig.stickyTargetTime = value
+			notifySuccess("Sticky Target", "Sticky time set to " .. string.format("%.1f", value) .. "s", 3)
+		end
+	})
+	
+	undTab:CreateDropdown({
+		Name = "🎯 Aim Part",
+		Options = {"Head", "HumanoidRootPart", "UpperTorso"},
+		CurrentOption = "Head",
+		MultipleOptions = false,
+		Callback = function(option)
+			autoShootConfig.aimPart = option
+			notifySuccess("Aim Part", "Now aiming at " .. option, 3)
+		end
+	})
+	
+	undTab:CreateToggle({
+		Name = "🔎 Prefer Visible Targets",
+		CurrentValue = true,
+		Callback = function(bool)
+			autoShootConfig.preferVisibleTargets = bool
+			if bool then
+				notifySuccess("Visibility Bias", "Will favor targets with clear line of sight", 3)
+			else
+				notify("Visibility Bias", "Disabled", 3)
+			end
+		end
+	})
+	
+	undTab:CreateToggle({
+		Name = "🎯 Smart Target Switching",
+		CurrentValue = true,
+		Callback = function(bool)
+			autoShootConfig.smartTargetSwitching = bool
+			if bool then
+				notifySuccess("Smart Switching", "Will switch targets if current target becomes invalid", 3)
+			else
+				notify("Fixed Target", "Will stick to current target until it's eliminated", 3)
+			end
+		end
+	})
+	
+	undTab:CreateToggle({
+		Name = "🎯 Lead Moving Targets",
+		CurrentValue = true,
+		Callback = function(bool)
+			autoShootConfig.leadMovingTargets = bool
+			if bool then
+				notifySuccess("Lead Shots", "Will predict and lead moving targets", 3)
+			else
+				notify("Direct Shots", "Will shoot directly at current position", 3)
+			end
+		end
+	})
+	
+	undTab:CreateSlider({
+		Name = "🎯 Prediction Strength",
+		Range = {0.1, 1.0},
+		Increment = 0.1,
+		Suffix = "",
+		CurrentValue = 0.5,
+		Callback = function(value)
+			autoShootConfig.predictionStrength = value
+			notifySuccess("Prediction Updated", "Prediction strength set to " .. string.format("%.1f", value), 3)
+		end
+	})
+	
 	undTab:CreateButton({
 		Name = "📊 Show Accuracy Stats",
 		Callback = function()
@@ -1236,44 +1413,6 @@ if game.PlaceId == (9791603388) then
 		end
 	})
 
-	-- Advanced Auto Shoot Features
-	undTab:CreateToggle({
-		Name = "🎯 Smart Target Switching",
-		CurrentValue = true,
-		Callback = function(bool)
-			autoShootConfig.smartTargetSwitching = bool
-			if bool then
-				notifySuccess("Smart Switching", "Will switch targets if current target becomes invalid", 3)
-			else
-				notify("Fixed Target", "Will stick to current target until it's eliminated", 3)
-			end
-		end
-	})
-
-	undTab:CreateToggle({
-		Name = "🎯 Lead Moving Targets",
-		CurrentValue = true,
-		Callback = function(bool)
-			autoShootConfig.leadMovingTargets = bool
-			if bool then
-				notifySuccess("Lead Shots", "Will predict and lead moving targets", 3)
-			else
-				notify("Direct Shots", "Will shoot directly at current position", 3)
-			end
-		end
-	})
-
-	undTab:CreateSlider({
-		Name = "🎯 Prediction Strength",
-		Range = {0.1, 1.0},
-		Increment = 0.1,
-		Suffix = "",
-		CurrentValue = 0.5,
-		Callback = function(value)
-			autoShootConfig.predictionStrength = value
-			notifySuccess("Prediction Updated", "Prediction strength set to " .. string.format("%.1f", value), 3)
-		end
-	})
 
 	undTab:CreateButton({
 		Name = "🎯 Quick Target Test",
@@ -1749,8 +1888,7 @@ else
 					notifyError("Player Not Found", "No players found matching: " .. text, 5)
 				end
 			end
-		end
-	})
+		})
 	
 	w3:CreateInput({
 		Name = "➖ Remove from Whitelist",
@@ -1768,8 +1906,7 @@ else
 					notifyError("Player Not Found", "No players found matching: " .. text, 5)
 				end
 			end
-		end
-	})
+		})
 	
 	w3:CreateInput({
 		Name = "🔍 Check Protection Status",
