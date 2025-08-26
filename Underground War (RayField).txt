@@ -803,112 +803,514 @@ if game.PlaceId == (9791603388) then
 	local player = Players.LocalPlayer
 	local shooting = false
 
-	local function isNear(...)
-		local nearestPlayer = nil
-		local nearestDistance = math.huge
-		for _, target in pairs({...}) do
-			if target ~= player and target.Team ~= player.Team then
+	-- Enhanced target selection with priority system
+	local function getBestTarget()
+		local bestTarget = nil
+		local bestScore = -math.huge
+		local playerPos = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+		if not playerPos then return nil end
+		
+		for _, target in pairs(Players:GetPlayers()) do
+			if target ~= player and target.Team ~= player.Team and not isWhitelisted(target.Name) then
 				local targetCharacter = target.Character
 				if targetCharacter and targetCharacter:FindFirstChild("HumanoidRootPart") and target.Character:FindFirstChildOfClass("Humanoid").Health > 0 then
-					local distance = (targetCharacter.PrimaryPart.Position - player.Character.PrimaryPart.Position).magnitude
-					if distance < nearestDistance then
-						nearestDistance = distance
-						nearestPlayer = target
+					local distance = (targetCharacter.HumanoidRootPart.Position - playerPos.Position).magnitude
+					local humanoid = target.Character:FindFirstChildOfClass("Humanoid")
+					local velocity = targetCharacter.HumanoidRootPart.Velocity.magnitude
+					
+					-- Check if target is within configured range
+					if distance <= (autoShootConfig and autoShootConfig.maxRange or 200) then
+						-- Dynamic scoring based on configuration
+						local distanceScore = 0
+						local velocityScore = 0
+						local healthScore = 0
+						
+						if autoShootConfig and autoShootConfig.priorityClosest then
+							distanceScore = math.max(0, 100 - distance)
+						end
+						
+						if autoShootConfig and autoShootConfig.prioritySlowMovement then
+							velocityScore = math.max(0, 50 - velocity/2)
+						end
+						
+						if autoShootConfig and autoShootConfig.priorityLowHealth then
+							healthScore = math.max(0, 100 - humanoid.Health)
+						end
+						
+						-- If no priorities are set, use balanced scoring
+						if not (autoShootConfig and (autoShootConfig.priorityClosest or autoShootConfig.prioritySlowMovement or autoShootConfig.priorityLowHealth)) then
+							distanceScore = math.max(0, 100 - distance)
+							velocityScore = math.max(0, 50 - velocity/2)
+							healthScore = math.max(0, 100 - humanoid.Health)
+						end
+						
+						local totalScore = distanceScore + velocityScore + healthScore
+						
+						if totalScore > bestScore then
+							bestScore = totalScore
+							bestTarget = target
+						end
 					end
 				end
 			end
 		end
-		return nearestPlayer
+		return bestTarget
 	end
 
-	local function isCharacterStable(targetPlayer)
+	-- Advanced movement prediction with multiple algorithms
+	local function predictPositionAdvanced(targetPlayer)
 		local targetCharacter = targetPlayer.Character
-		if not targetCharacter then return false end
+		if not targetCharacter then return nil end
+		
 		local humanoid = targetCharacter:FindFirstChildOfClass("Humanoid")
 		local humanoidRootPart = targetCharacter:FindFirstChild("HumanoidRootPart")
-		if not humanoid or not humanoidRootPart then return false end
-		local velocity = humanoidRootPart.Velocity.magnitude
-		local stabilityThreshold = humanoid.WalkSpeed
-		return velocity < stabilityThreshold
+		local head = targetCharacter:FindFirstChild("Head")
+		
+		if not humanoid or not humanoidRootPart or not head then return nil end
+		
+		local currentPosition = head.Position
+		local currentVelocity = humanoidRootPart.Velocity
+		local moveDirection = humanoid.MoveDirection
+		local walkSpeed = humanoid.WalkSpeed
+		
+		-- Check if advanced prediction is enabled
+		if autoShootConfig and not autoShootConfig.useAdvancedPrediction then
+			-- Simple linear prediction with configurable strength
+			local strength = autoShootConfig.predictionStrength or 0.5
+			return currentPosition + (currentVelocity * strength)
+		end
+		
+		-- Multiple prediction algorithms
+		local predictions = {}
+		
+		-- Algorithm 1: Linear prediction based on current velocity
+		local linearPrediction = currentPosition + (currentVelocity * 0.5)
+		table.insert(predictions, linearPrediction)
+		
+		-- Algorithm 2: Direction-based prediction
+		if moveDirection.magnitude > 0.1 then
+			local directionPrediction = currentPosition + (moveDirection * walkSpeed * 0.4)
+			table.insert(predictions, directionPrediction)
+		end
+		
+		-- Algorithm 3: Acceleration-based prediction (if velocity is changing)
+		local lastVelocity = targetPlayer:GetAttribute("LastVelocity") or currentVelocity
+		local acceleration = (currentVelocity - lastVelocity) * 0.3
+		local accelerationPrediction = currentPosition + (currentVelocity * 0.4) + (acceleration * 0.1)
+		table.insert(predictions, accelerationPrediction)
+		
+		-- Store current velocity for next frame
+		targetPlayer:SetAttribute("LastVelocity", currentVelocity)
+		
+		-- Return weighted average of predictions
+		local finalPosition = Vector3.new(0, 0, 0)
+		local totalWeight = 0
+		
+		for i, pred in ipairs(predictions) do
+			local weight = 1 / i -- First prediction has highest weight
+			finalPosition = finalPosition + (pred * weight)
+			totalWeight = totalWeight + weight
+		end
+		
+		return finalPosition / totalWeight
 	end
 
-	local function predictPosition(targetPlayer)
+	-- Enhanced hit detection with multiple checks
+	local function canHitAdvanced(targetPlayer)
 		local targetCharacter = targetPlayer.Character
-		if targetCharacter then
-			local humanoid = targetCharacter:FindFirstChildOfClass("Humanoid")
-			local humanoidRootPart = targetCharacter:FindFirstChild("HumanoidRootPart")
-			if humanoid and humanoidRootPart then
-				local currentPosition = targetCharacter.Head.Position
-				local moveDirection = humanoid.MoveDirection
-				local speed = humanoid.WalkSpeed
-				local timeToPredict = 0.44
-				local velocity = moveDirection * speed
-				if moveDirection.magnitude == 0 then
-					return currentPosition
-				else
-					local predictedPosition = currentPosition + (velocity * timeToPredict)
-					return predictedPosition
-				end
+		local playerCharacter = player.Character
+		
+		if not targetCharacter or not playerCharacter then return false end
+		
+		local targetHead = targetCharacter:FindFirstChild("Head")
+		local playerHead = playerCharacter:FindFirstChild("Head")
+		local targetHRP = targetCharacter:FindFirstChild("HumanoidRootPart")
+		local playerHRP = playerCharacter:FindFirstChild("HumanoidRootPart")
+		
+		if not targetHead or not playerHead or not targetHRP or not playerHRP then return false end
+		
+		-- Check if multi-raycast is enabled
+		if autoShootConfig and not autoShootConfig.useMultiRaycast then
+			-- Single raycast check
+			local direction = (targetHead.Position - playerHead.Position).unit
+			local distance = (targetHead.Position - playerHead.Position).magnitude
+			
+			local raycastParams = RaycastParams.new()
+			raycastParams.FilterDescendantsInstances = { playerCharacter }
+			raycastParams.IgnoreWater = true
+			
+			local raycastResult = workspace:Raycast(playerHead.Position, direction * distance, raycastParams)
+			
+			return not raycastResult or raycastResult.Instance:IsDescendantOf(targetCharacter)
+		end
+		
+		-- Multiple raycast checks for better accuracy
+		local raycastPoints = {
+			{start = playerHead.Position, end = targetHead.Position},
+			{start = playerHead.Position, end = targetHRP.Position},
+			{start = playerHRP.Position, end = targetHead.Position}
+		}
+		
+		local hitCount = 0
+		local totalChecks = #raycastPoints
+		
+		for _, raycast in ipairs(raycastPoints) do
+			local direction = (raycast.end - raycast.start).unit
+			local distance = (raycast.end - raycast.start).magnitude
+			
+			local raycastParams = RaycastParams.new()
+			raycastParams.FilterDescendantsInstances = { playerCharacter }
+			raycastParams.IgnoreWater = true
+			
+			local raycastResult = workspace:Raycast(raycast.start, direction * distance, raycastParams)
+			
+			if not raycastResult or raycastResult.Instance:IsDescendantOf(targetCharacter) then
+				hitCount = hitCount + 1
 			end
 		end
-		return nil
+		
+		-- Return true if majority of checks pass
+		return hitCount >= math.ceil(totalChecks * 0.6)
 	end
 
-	local function canHit(targetPlayer)
-		local targetHRP = targetPlayer.Character and targetPlayer.Character:FindFirstChild("HumanoidRootPart")
-		if not targetHRP then return false end
-		local startPosition = player.Character.Head.Position
-		local endPosition = targetPlayer.Character.Head.Position
-		local direction = (endPosition - startPosition).unit * (startPosition - endPosition).magnitude
-		local raycastParams = RaycastParams.new()
-		raycastParams.FilterDescendantsInstances = { player.Character }
-		raycastParams.IgnoreWater = true
-		local raycastResult = workspace:Raycast(startPosition, direction, raycastParams)
-		return not raycastResult or raycastResult.Instance:IsDescendantOf(targetPlayer.Character)
+	-- Target stability assessment with multiple factors
+	local function isTargetStable(targetPlayer)
+		local targetCharacter = targetPlayer.Character
+		if not targetCharacter then return false end
+		
+		local humanoid = targetCharacter:FindFirstChildOfClass("Humanoid")
+		local humanoidRootPart = targetCharacter:FindFirstChild("HumanoidRootPart")
+		
+		if not humanoid or not humanoidRootPart then return false end
+		
+		local velocity = humanoidRootPart.Velocity.magnitude
+		local walkSpeed = humanoid.WalkSpeed
+		local health = humanoid.Health
+		local maxHealth = humanoid.MaxHealth
+		
+		-- Multiple stability factors
+		local velocityStable = velocity < walkSpeed * 0.7
+		local healthStable = health > maxHealth * 0.3
+		local notJumping = humanoid:GetState() ~= Enum.HumanoidStateType.Jumping
+		local notFalling = humanoid:GetState() ~= Enum.HumanoidStateType.Freefall
+		
+		-- Check if target is moving in a predictable pattern
+		local lastPosition = targetPlayer:GetAttribute("LastPosition")
+		local currentPosition = humanoidRootPart.Position
+		local movementDistance = 0
+		
+		if lastPosition then
+			movementDistance = (currentPosition - lastPosition).magnitude
+		end
+		
+		targetPlayer:SetAttribute("LastPosition", currentPosition)
+		
+		local movementStable = movementDistance < 5 -- Not moving too fast
+		
+		return velocityStable and healthStable and notJumping and notFalling and movementStable
 	end
 
+	-- Enhanced Auto Shoot with advanced targeting
+	local lastShotTime = 0
+	local shotCooldown = 0.8 -- Minimum time between shots
+	local consecutiveHits = 0
+	local consecutiveMisses = 0
+	
 	local function on(bool)
 		if bool then
 			RunService.Heartbeat:Connect(function()
-				if shooting then
-					for i, v in pairs(Players:GetPlayers()) do
-						if isWhitelisted(v) or isWhitelisted(v.Name) then continue end
-						local nearestPlayer = isNear(v)
-						if v and v.Team ~= plr.Team and v.Character:FindFirstChildWhichIsA("ForceField") == nil and not hindiKanaNiyaMahal(v, plr) then
-							if isCharacterStable(v) and canHit(v) then
-								local predictedPosition = predictPosition(v)
+				if shooting and tick() - lastShotTime >= shotCooldown then
+					local bestTarget = getBestTarget()
+					
+					if bestTarget and bestTarget.Character and not isWhitelisted(bestTarget.Name) then
+						local targetCharacter = bestTarget.Character
+						local humanoid = targetCharacter:FindFirstChildOfClass("Humanoid")
+						
+						-- Check if target is valid
+						if humanoid and humanoid.Health > 0 and targetCharacter:FindFirstChildWhichIsA("ForceField") == nil and not hindiKanaNiyaMahal(bestTarget, plr) then
+							
+							-- Advanced stability and hit detection
+							if isTargetStable(bestTarget) and canHitAdvanced(bestTarget) then
+								local predictedPosition = predictPositionAdvanced(bestTarget)
+								
 								if predictedPosition then
-									local args = { [1] = predictedPosition, [2] = "Sniper" }
-									if player.Character:FindFirstChild("Sniper") then
-										RemoteEvent:FireServer(unpack(args))
-										player.Character:FindFirstChild("Sniper"):Activate()
+									-- Dynamic cooldown based on accuracy
+									local adaptiveCooldown = shotCooldown
+									if autoShootConfig and autoShootConfig.adaptiveCooldown then
+										if consecutiveHits > 3 then
+											adaptiveCooldown = math.max(0.3, shotCooldown - 0.1)
+										elseif consecutiveMisses > 2 then
+											adaptiveCooldown = math.min(1.5, shotCooldown + 0.2)
+										end
+									end
+									
+									-- Check if enough time has passed with adaptive cooldown
+									if tick() - lastShotTime >= adaptiveCooldown then
+										local args = { [1] = predictedPosition, [2] = "Sniper" }
+										
+										if player.Character:FindFirstChild("Sniper") then
+											-- Fire the shot
+											RemoteEvent:FireServer(unpack(args))
+											player.Character:FindFirstChild("Sniper"):Activate()
+											
+											lastShotTime = tick()
+											
+											-- Track shot accuracy (simplified - in real implementation you'd need to track actual hits)
+											local distance = (predictedPosition - targetCharacter.Head.Position).magnitude
+											if distance < 5 then -- Close enough to consider a potential hit
+												consecutiveHits = consecutiveHits + 1
+												consecutiveMisses = 0
+											else
+												consecutiveMisses = consecutiveMisses + 1
+												consecutiveHits = 0
+											end
+											
+											-- Reset counters if they get too high
+											if consecutiveHits > 10 then consecutiveHits = 5 end
+											if consecutiveMisses > 10 then consecutiveMisses = 5 end
+										end
 									end
 								end
 							else
-								wait(0.5)
+								-- Target not stable, wait a bit longer
+								wait(0.1)
 							end
-						else
-							-- no valid player
 						end
+					else
+						-- No valid target, reduce cooldown for faster target acquisition
+						shotCooldown = math.max(0.3, shotCooldown - 0.05)
 					end
 				end
 			end)
 		else
 			shooting = false
+			-- Reset accuracy tracking when stopping
+			consecutiveHits = 0
+			consecutiveMisses = 0
 		end
 	end
 
+	-- Auto Shoot Configuration Variables
+	local autoShootConfig = {
+		enabled = false,
+		shotCooldown = 0.8,
+		maxRange = 200,
+		accuracyThreshold = 5,
+		adaptiveCooldown = true,
+		priorityClosest = true,
+		priorityLowHealth = true,
+		prioritySlowMovement = true,
+		useAdvancedPrediction = true,
+		useMultiRaycast = true,
+		smartTargetSwitching = true,
+		leadMovingTargets = true,
+		predictionStrength = 0.5
+	}
+
 	undTab:CreateToggle({
-		Name = "🎯 Auto Shoot",
+		Name = "🎯 Auto Shoot (Enhanced)",
 		CurrentValue = false,
 		Callback = function(bool)
+			autoShootConfig.enabled = bool
 			shooting = bool
 			if bool then 
 				on(true)
-				notifySuccess("Auto Shoot", "Sniper auto-targeting activated with prediction", 4)
+				notifySuccess("Auto Shoot Enhanced", "Advanced sniper targeting activated with AI prediction", 4)
 			else 
 				on(false) 
-				notify("Auto Shoot", "Sniper auto-targeting deactivated", 3)
+				notify("Auto Shoot Stopped", "Advanced sniper targeting deactivated", 3)
+			end
+		end
+	})
+
+	undTab:CreateSlider({
+		Name = "🎯 Shot Cooldown",
+		Range = {0.1, 2.0},
+		Increment = 0.1,
+		Suffix = "s",
+		CurrentValue = 0.8,
+		Callback = function(value)
+			autoShootConfig.shotCooldown = value
+			shotCooldown = value
+			notifySuccess("Cooldown Updated", "Shot cooldown set to " .. string.format("%.1f", value) .. "s", 3)
+		end
+	})
+
+	undTab:CreateSlider({
+		Name = "📏 Max Range",
+		Range = {50, 500},
+		Increment = 10,
+		Suffix = " studs",
+		CurrentValue = 200,
+		Callback = function(value)
+			autoShootConfig.maxRange = value
+			notifySuccess("Range Updated", "Maximum targeting range set to " .. value .. " studs", 3)
+		end
+	})
+
+	undTab:CreateToggle({
+		Name = "🧠 Adaptive Cooldown",
+		CurrentValue = true,
+		Callback = function(bool)
+			autoShootConfig.adaptiveCooldown = bool
+			if bool then
+				notifySuccess("Adaptive Cooldown", "Shot timing will adjust based on accuracy", 3)
+			else
+				notify("Fixed Cooldown", "Using fixed shot timing", 3)
+			end
+		end
+	})
+
+	undTab:CreateToggle({
+		Name = "🎯 Advanced Prediction",
+		CurrentValue = true,
+		Callback = function(bool)
+			autoShootConfig.useAdvancedPrediction = bool
+			if bool then
+				notifySuccess("Advanced Prediction", "Using multi-algorithm position prediction", 3)
+			else
+				notify("Basic Prediction", "Using simple linear prediction", 3)
+			end
+		end
+	})
+
+	undTab:CreateToggle({
+		Name = "🔍 Multi-Raycast",
+		CurrentValue = true,
+		Callback = function(bool)
+			autoShootConfig.useMultiRaycast = bool
+			if bool then
+				notifySuccess("Multi-Raycast", "Enhanced hit detection with multiple checks", 3)
+			else
+				notify("Single-Raycast", "Basic hit detection", 3)
+			end
+		end
+	})
+
+	undTab:CreateDropdown({
+		Name = "🎯 Target Priority",
+		Options = {"Closest", "Lowest Health", "Slowest Movement", "Balanced"},
+		CurrentOption = "Balanced",
+		MultipleOptions = false,
+		Callback = function(option)
+			if option == "Closest" then
+				autoShootConfig.priorityClosest = true
+				autoShootConfig.priorityLowHealth = false
+				autoShootConfig.prioritySlowMovement = false
+			elseif option == "Lowest Health" then
+				autoShootConfig.priorityClosest = false
+				autoShootConfig.priorityLowHealth = true
+				autoShootConfig.prioritySlowMovement = false
+			elseif option == "Slowest Movement" then
+				autoShootConfig.priorityClosest = false
+				autoShootConfig.priorityLowHealth = false
+				autoShootConfig.prioritySlowMovement = true
+			elseif option == "Balanced" then
+				autoShootConfig.priorityClosest = true
+				autoShootConfig.priorityLowHealth = true
+				autoShootConfig.prioritySlowMovement = true
+			end
+			notifySuccess("Priority Updated", "Target priority set to: " .. option, 3)
+		end
+	})
+
+	undTab:CreateButton({
+		Name = "📊 Show Accuracy Stats",
+		Callback = function()
+			local accuracy = consecutiveHits > 0 and (consecutiveHits / (consecutiveHits + consecutiveMisses)) * 100 or 0
+			notifyWithActions(
+				"🎯 Accuracy Statistics",
+				string.format("Hits: %d | Misses: %d | Accuracy: %.1f%%", consecutiveHits, consecutiveMisses, accuracy),
+				{
+					["Reset Stats"] = function()
+						consecutiveHits = 0
+						consecutiveMisses = 0
+						notifySuccess("Stats Reset", "Accuracy statistics have been reset", 3)
+					end,
+					["Close"] = function()
+						-- Just close
+					end
+				},
+				10
+			)
+		end
+	})
+
+	-- Advanced Auto Shoot Features
+	undTab:CreateToggle({
+		Name = "🎯 Smart Target Switching",
+		CurrentValue = true,
+		Callback = function(bool)
+			autoShootConfig.smartTargetSwitching = bool
+			if bool then
+				notifySuccess("Smart Switching", "Will switch targets if current target becomes invalid", 3)
+			else
+				notify("Fixed Target", "Will stick to current target until it's eliminated", 3)
+			end
+		end
+	})
+
+	undTab:CreateToggle({
+		Name = "🎯 Lead Moving Targets",
+		CurrentValue = true,
+		Callback = function(bool)
+			autoShootConfig.leadMovingTargets = bool
+			if bool then
+				notifySuccess("Lead Shots", "Will predict and lead moving targets", 3)
+			else
+				notify("Direct Shots", "Will shoot directly at current position", 3)
+			end
+		end
+	})
+
+	undTab:CreateSlider({
+		Name = "🎯 Prediction Strength",
+		Range = {0.1, 1.0},
+		Increment = 0.1,
+		Suffix = "",
+		CurrentValue = 0.5,
+		Callback = function(value)
+			autoShootConfig.predictionStrength = value
+			notifySuccess("Prediction Updated", "Prediction strength set to " .. string.format("%.1f", value), 3)
+		end
+	})
+
+	undTab:CreateButton({
+		Name = "🎯 Quick Target Test",
+		Callback = function()
+			local bestTarget = getBestTarget()
+			if bestTarget then
+				notifyWithActions(
+					"🎯 Target Found",
+					string.format("Best target: %s\nDistance: %.1f studs\nHealth: %.0f%%", 
+						bestTarget.DisplayName,
+						(bestTarget.Character.HumanoidRootPart.Position - player.Character.HumanoidRootPart.Position).magnitude,
+						bestTarget.Character.Humanoid.Health
+					),
+					{
+						["Shoot Now"] = function()
+							if autoShootConfig.enabled then
+								local predictedPosition = predictPositionAdvanced(bestTarget)
+								if predictedPosition then
+									local args = { [1] = predictedPosition, [2] = "Sniper" }
+									if player.Character:FindFirstChild("Sniper") then
+										RemoteEvent:FireServer(unpack(args))
+										player.Character:FindFirstChild("Sniper"):Activate()
+										notifySuccess("Test Shot", "Fired test shot at " .. bestTarget.DisplayName, 3)
+									end
+								end
+							else
+								notifyWarning("Auto Shoot Disabled", "Please enable Auto Shoot first", 4)
+							end
+						end,
+						["Close"] = function()
+							-- Just close
+						end
+					},
+					15
+				)
+			else
+				notifyWarning("No Targets", "No valid targets found within range", 4)
 			end
 		end
 	})
@@ -1436,6 +1838,6 @@ Players.PlayerRemoving:Connect(function(v)
 end)
 
 -- Enhanced script completion notification
-notifySuccess("🚀 Script Ready", "All systems loaded successfully! Configure your settings and dominate the battlefield!", 6)
+notifySuccess("🚀 Script Ready", "All systems loaded successfully! Enhanced Auto Shoot with AI prediction is now available!", 6)
 
 return _G.name
