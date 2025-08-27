@@ -800,8 +800,20 @@ if game.PlaceId == (9791603388) then
   local RemoteEvent = ReplicatedStorage.Events.Remote.ShotTarget
   local Players = game:GetService("Players")
   local RunService = game:GetService("RunService")
+  local UserInputService = game:GetService("UserInputService")
+  local Stats = game:GetService("Stats")
   local player = Players.LocalPlayer
   local shooting = false
+  local inputConn
+  local bulletSpeed = 300
+  local function getPingSeconds()
+  	local pingItem = Stats.Network.ServerStatsItem["Data Ping"]
+  	if pingItem then
+  		local ms = tonumber(pingItem:GetValueString():gsub(" ms","")) or 0
+  		return ms / 1000
+  	end
+  	return 0
+  end
   
   -- Camera + OnScreen check
   local camera = workspace.CurrentCamera
@@ -812,6 +824,90 @@ if game.PlaceId == (9791603388) then
   	return onScreen
   end
   
+  local function isCharacterValidTarget(char)
+  	if not char then return false end
+  	if char:FindFirstChildWhichIsA("ForceField") then return false end
+  	local hum = char:FindFirstChildOfClass("Humanoid")
+  	return hum and hum.Health > 0
+  end
+
+  local function getEquippedSniper()
+  	local char = player.Character
+  	if not char then return nil end
+  	return char:FindFirstChild("Sniper")
+  end
+
+  local function selectBestTarget()
+  	local best, bestScore
+  	local mousePos = UserInputService:GetMouseLocation()
+  	for _, v in pairs(Players:GetPlayers()) do
+  		if v ~= player and v.Team ~= player.Team and not isWhitelisted(v) and not isWhitelisted(v.Name) then
+  			local char = v.Character
+  			local hrp = char and char:FindFirstChild("HumanoidRootPart")
+  			if hrp and isCharacterValidTarget(char) then
+  				if onlyOnScreen and not isOnScreen(hrp) then
+  					-- skip
+  				else
+  					local screenPoint = select(1, camera:WorldToViewportPoint(hrp.Position))
+  					local dx = screenPoint.X - mousePos.X
+  					local dy = screenPoint.Y - mousePos.Y
+  					local dist2 = dx*dx + dy*dy
+  					if not best or dist2 < bestScore then
+  						best, bestScore = v, dist2
+  					end
+  				end
+  			end
+  		end
+  	end
+  	return best
+  end
+
+  local function computePredictedPosition(targetPlayer)
+  	local char = targetPlayer.Character
+  	if not char then return nil end
+  	local hrp = char:FindFirstChild("HumanoidRootPart")
+  	local head = char:FindFirstChild("Head")
+  	if not hrp or not head then return nil end
+  	local startPos = (player.Character and player.Character:FindFirstChild("Head") and player.Character.Head.Position) or camera.CFrame.Position
+  	local targetPos = head.Position
+  	local velocity = hrp.AssemblyLinearVelocity or Vector3.new()
+  	local distance = (targetPos - startPos).Magnitude
+  	local travelTime = distance / math.max(1, bulletSpeed)
+  	local t = getPingSeconds() + travelTime
+  	local predicted = targetPos + (velocity * t)
+  	local g = workspace.Gravity or 196.2
+  	if velocity.Y > 0 then
+  		predicted = predicted + Vector3.new(0, -0.5 * g * (t * t), 0)
+  	end
+  	return predicted
+  end
+
+  local function hasLineOfSight(targetCharacter, predictedPosition)
+  	local originPart = player.Character and (player.Character:FindFirstChild("Head") or player.Character:FindFirstChild("HumanoidRootPart"))
+  	if not originPart then return false end
+  	local origin = originPart.Position
+  	local direction = predictedPosition - origin
+  	local params = RaycastParams.new()
+  	params.FilterType = Enum.RaycastFilterType.Exclude
+  	params.FilterDescendantsInstances = { player.Character }
+  	params.IgnoreWater = true
+  	local result = workspace:Raycast(origin, direction, params)
+  	if not result then return true end
+  	return result.Instance and result.Instance:IsDescendantOf(targetCharacter)
+  end
+
+  local function attemptShoot()
+  	local sniper = getEquippedSniper()
+  	if not sniper then return end
+  	local target = selectBestTarget()
+  	if not target then return end
+  	local predicted = computePredictedPosition(target)
+  	if not predicted then return end
+  	if not hasLineOfSight(target.Character, predicted) then return end
+  	RemoteEvent:FireServer(predicted, "Sniper")
+  	sniper:Activate()
+  	end
+
   local function isCharacterStable(targetPlayer)
   	local targetCharacter = targetPlayer.Character
   	if not targetCharacter then return false end
@@ -858,54 +954,44 @@ if game.PlaceId == (9791603388) then
   	return not raycastResult or raycastResult.Instance:IsDescendantOf(targetPlayer.Character)
   end
   
-  local function on(bool)
-  	if bool then
-  		RunService.Heartbeat:Connect(function()
-  			if shooting then
-  				for _, v in pairs(Players:GetPlayers()) do
-  					if isWhitelisted(v) or isWhitelisted(v.Name) then continue end
-  					if v and v.Team ~= player.Team 
-  						and v.Character
-  						and v.Character:FindFirstChild("HumanoidRootPart")
-  						and v.Character:FindFirstChildWhichIsA("ForceField") == nil
-  						and not hindiKanaNiyaMahal(v, player) then
-  
-  						-- Chỉ bắn nếu mục tiêu trong màn hình
-  						if onlyOnScreen and not isOnScreen(v.Character.HumanoidRootPart) then
-  							continue
-  						end
-  
-  						if isCharacterStable(v) and canHit(v) then
-  							local predictedPosition = predictPosition(v)
-  							if predictedPosition then
-  								if player.Character:FindFirstChild("Sniper") then
-  									RemoteEvent:FireServer(predictedPosition, "Sniper")
-  									player.Character.Sniper:Activate()
-  								end
-  							end
-  						end
-  					end
-  				end
+  local function on(enabled)
+  	shooting = enabled
+  	if inputConn then
+  		inputConn:Disconnect()
+  		inputConn = nil
+  	end
+  	if enabled then
+  		inputConn = UserInputService.InputBegan:Connect(function(input, gpe)
+  			if gpe then return end
+  			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+  				attemptShoot()
   			end
   		end)
-  	else
-  		shooting = false
   	end
   end
 
 
 	undTab:CreateToggle({
-		Name = "🎯 Auto Shoot",
+		Name = "🎯 Tap-To-Snipe (Auto Aim)",
 		CurrentValue = false,
 		Callback = function(bool)
-			shooting = bool
-			if bool then 
-				on(true)
-				notifySuccess("Auto Shoot", "Sniper auto-targeting activated with prediction", 4)
-			else 
-				on(false) 
-				notify("Auto Shoot", "Sniper auto-targeting deactivated", 3)
+			on(bool)
+			if bool then
+				notifySuccess("Auto Shoot", "Tap or click to auto-aim and snipe", 4)
+			else
+				notify("Auto Shoot", "Tap-to-snipe disabled", 3)
 			end
+		end
+	})
+
+	undTab:CreateSlider({
+		Name = "🔧 Bullet Speed (studs/s)",
+		Range = {100, 1000},
+		Increment = 10,
+		CurrentValue = bulletSpeed,
+		Callback = function(value)
+			bulletSpeed = math.clamp(tonumber(value) or 300, 100, 1000)
+			notify("Auto Shoot", "Bullet speed set to " .. tostring(math.floor(bulletSpeed)) .. " studs/s", 3)
 		end
 	})
 
